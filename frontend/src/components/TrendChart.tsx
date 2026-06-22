@@ -23,15 +23,28 @@ const BUS_COLORS = ["#4f46e5", "#ef4444", "#10b981", "#f59e0b", "#8b5cf6", "#06b
 // insert a null breaker to stop the line bridging time with no data.
 type Row = Record<string, number | string | null>;
 
-// Pick a bucket size from the selected span so a wide range doesn't cram each
-// mission into a few pixels (and a narrow range keeps full detail).
+// Pick a bucket size from the selected span. Capped at 1 hour so each mission
+// keeps several points and renders as a line (never collapses to a lone dot);
+// a narrow range keeps full 5-minute detail.
 function pickBucketSeconds(spanMs: number | null): number {
   if (spanMs == null) return 300;
   const days = spanMs / 86_400_000;
-  if (days <= 2) return 300; // 5 min
-  if (days <= 14) return 3600; // 1 hour
-  if (days <= 90) return 21_600; // 6 hours
-  return 86_400; // 1 day
+  return days <= 2 ? 300 : 3600;
+}
+
+// First timestamp of each distinct (local) day among the rows that carry data,
+// for drawing day-separator lines. Returns [] if there are too many to be
+// legible. `ts` reads the x value from a row.
+function dayStarts<T>(rows: T[], ts: (r: T) => number, hasData: (r: T) => boolean): number[] {
+  const starts: number[] = [];
+  let prevDay = "";
+  for (const r of rows) {
+    if (!hasData(r)) continue;
+    const day = new Date(ts(r)).toLocaleDateString();
+    if (day !== prevDay) { starts.push(ts(r)); prevDay = day; }
+  }
+  const transitions = starts.slice(1); // skip the very first day (chart start)
+  return transitions.length <= 31 ? transitions : [];
 }
 
 function spanMsOf(start?: string, end?: string): number | null {
@@ -121,9 +134,27 @@ export function TrendChart({ filters, buses }: { filters: Filters; buses: string
     selected,
     bucketSeconds * 1000
   );
-  // Show dots when points are sparse so isolated missions are visible (a lone
-  // bucket can't draw a line); hide them on dense detail views.
-  const showDots = compareRows.length <= 40;
+
+  // Vertical separators at the start of each distinct day, so days are easy to
+  // tell apart. Compare mode keys off the time axis (ts); single mode keys off
+  // the categorical label. Suppressed when there would be too many to read.
+  const compareDayLines = dayStarts(
+    compareRows,
+    (r) => r.ts as number,
+    (r) => selected.some((b) => typeof r[b] === "number"),
+  );
+  const singleDayLines = ((): string[] => {
+    const starts: string[] = [];
+    let prevDay = "";
+    for (const p of single.data ?? []) {
+      const d = new Date(p.bucket);
+      const day = d.toLocaleDateString();
+      if (day !== prevDay) { starts.push(d.toLocaleString()); prevDay = day; }
+    }
+    const transitions = starts.slice(1); // skip the very first day (chart start)
+    return transitions.length <= 31 ? transitions : [];
+  })();
+  const dayLines: (number | string)[] = compare ? compareDayLines : singleDayLines;
 
   // Zero-split coloring (single mode only — keeps power consumption vs regen clear).
   let min = Infinity;
@@ -205,6 +236,9 @@ export function TrendChart({ filters, buses }: { filters: Filters; buses: string
               formatter={(value, name) => [value as number, compare ? name : metricLabel]}
             />
             {hasNegative && <ReferenceLine y={0} stroke="#888" strokeDasharray="4 4" />}
+            {dayLines.map((x, i) => (
+              <ReferenceLine key={`day-${i}`} x={x} stroke="#c7cdd6" strokeDasharray="2 4" />
+            ))}
             {compare ? (
               <>
                 <Legend />
@@ -215,7 +249,7 @@ export function TrendChart({ filters, buses }: { filters: Filters; buses: string
                     dataKey={bus}
                     name={bus}
                     stroke={BUS_COLORS[buses.indexOf(bus) % BUS_COLORS.length]}
-                    dot={showDots ? { r: 2 } : false}
+                    dot={false}
                   />
                 ))}
               </>
