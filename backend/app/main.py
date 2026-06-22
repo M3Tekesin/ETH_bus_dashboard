@@ -1,12 +1,13 @@
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from .auth import require_auth
 from .config import settings
 from .db import create_pool, set_pool
-from .routers import ingest, query
+from .routers import auth, ingest, query
 
 SCHEMA = Path(__file__).parent / "schema.sql"
 
@@ -29,10 +30,13 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-app.include_router(ingest.router)
-app.include_router(query.router)
+# /api/login is public; data + ingestion endpoints require a valid token.
+app.include_router(auth.router)
+app.include_router(ingest.router, dependencies=[Depends(require_auth)])
+app.include_router(query.router, dependencies=[Depends(require_auth)])
 
 
 @app.get("/api/health")
 async def health():
     return {"status": "ok"}
+

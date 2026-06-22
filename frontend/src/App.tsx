@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import { fetchBuses, fetchTimeRange, type Filters } from "./api";
+import { clearToken, fetchBuses, fetchTimeRange, getToken, type Filters } from "./api";
 import { useAsync } from "./hooks";
 import { FilterBar } from "./components/FilterBar";
 import { KpiCards } from "./components/KpiCards";
 import { TrendChart } from "./components/TrendChart";
 import { DistributionChart } from "./components/DistributionChart";
+import { Login } from "./components/Login";
 import "./App.css";
 
 // "YYYY-MM-DDTHH:MM" (UTC) for <input type="datetime-local">.
@@ -13,6 +14,20 @@ function toInput(iso: string): string {
 }
 
 export default function App() {
+  const [authed, setAuthed] = useState(() => !!getToken());
+
+  // A 401 anywhere clears the token and fires this event; return to login.
+  useEffect(() => {
+    const onExpired = () => setAuthed(false);
+    window.addEventListener("auth-expired", onExpired);
+    return () => window.removeEventListener("auth-expired", onExpired);
+  }, []);
+
+  if (!authed) return <Login onAuthed={() => setAuthed(true)} />;
+  return <Dashboard onLogout={() => { clearToken(); setAuthed(false); }} />;
+}
+
+function Dashboard({ onLogout }: { onLogout: () => void }) {
   const [filters, setFilters] = useState<Filters>({});
   const { data: buses } = useAsync(() => fetchBuses(), []);
   const defaulted = useRef(false);
@@ -43,7 +58,10 @@ export default function App() {
 
   return (
     <div className="app">
-      <h1>Telemetry Analytics Dashboard</h1>
+      <div className="app-head">
+        <h1>Telemetry Analytics Dashboard</h1>
+        <button className="logout" onClick={onLogout}>Log out</button>
+      </div>
       <FilterBar buses={buses ?? []} filters={filters} onChange={setFilters} />
       <KpiCards filters={filters} />
       <div className="charts">

@@ -23,6 +23,8 @@ FastAPI + asyncpg + TimescaleDB (backend), React + Vite + Recharts (frontend).
   gaps between missions are rendered as breaks, not interpolated.
 - **Distribution chart** — histogram plus min/Q1/median/Q3/max for the chosen
   metric under the current filters.
+- **Authentication** — login gates the dashboard and ingestion. Passwords are
+  stored as Argon2id hashes; sessions use an HMAC-signed (HS256) JWT.
 
 ## Run Order
 
@@ -34,12 +36,19 @@ run tests before loading data.
    docker compose -f docker-compose.db.yml up -d
    ```
 
-2. **Backend** (applies schema on startup)
+2. **Configure auth** (see [Authentication](#authentication))
+   ```bash
+   cd backend && cp .env.example .env
+   # set AUTH_PASSWORD_HASH (uv run python -m app.hash_password "<pw>"),
+   # AUTH_PASSWORD (same plaintext, for the loader), and JWT_SECRET.
+   ```
+
+3. **Backend** (applies schema on startup)
    ```bash
    cd backend && uv sync && uv run uvicorn app.main:app --port 8000
    ```
 
-3. **Load samples**
+4. **Load samples** (authenticates with AUTH_USERNAME/AUTH_PASSWORD from `.env`)
    ```bash
    cd backend && uv run python scripts/load_samples.py <path-to>/ZTBus_samples
    ```
@@ -49,11 +58,11 @@ run tests before loading data.
      -c "CALL refresh_continuous_aggregate('telemetry_1min', NULL, NULL);"
    ```
 
-4. **Frontend**
+5. **Frontend**
    ```bash
    cd frontend && npm install && npm run dev
    ```
-   Opens at http://localhost:5173
+   Opens at http://localhost:5173 — sign in with your configured credentials.
 
 ## Tests
 
@@ -68,10 +77,13 @@ cd backend && uv run pytest
 
 ## API
 
-All query endpoints accept optional `bus`, `start`, and `end` (UTC) filters.
+All endpoints except `/api/login` and `/api/health` require a
+`Authorization: Bearer <token>` header. Query endpoints accept optional `bus`,
+`start`, and `end` (UTC) filters.
 
 | Method | Path | Purpose |
 |--------|------|---------|
+| `POST` | `/api/login` | Exchange username/password for a JWT |
 | `POST` | `/api/telemetry/batch` | Ingest a batch of telemetry records |
 | `GET`  | `/api/buses` | List vehicle IDs |
 | `GET`  | `/api/time-range` | Min/max timestamp of available data |
@@ -96,7 +108,24 @@ a `telemetry_1min` continuous aggregate pre-rolls per-minute stats. Conversions
 - Next steps: native compression of old chunks, retention policies, extra
   rollup resolutions (hourly/daily).
 
+## Authentication
+
+A single username/password gates the dashboard (no signup — the credential is
+known ahead of time).
+
+- The password is verified against an **Argon2id** hash; the plaintext is never
+  stored. Generate a hash with `uv run python -m app.hash_password "<password>"`.
+- A successful `POST /api/login` returns a **JWT signed with HMAC-SHA256**
+  (HS256). The frontend stores it and sends it as a bearer token; every data and
+  ingestion endpoint requires it. Tokens expire after `JWT_TTL_HOURS` (default 12).
+- Secrets come from the environment (`.env`, gitignored): `AUTH_USERNAME`,
+  `AUTH_PASSWORD_HASH`, `JWT_SECRET`, and `AUTH_PASSWORD` (used only by the
+  loader to authenticate). See `backend/.env.example`.
+
+The token is kept in `localStorage` for simplicity; for production behind TLS an
+httpOnly cookie would reduce XSS exposure at the cost of CSRF handling.
+
 ## Deferred bonuses
 
-Authentication, live (WebSocket/SSE) view, and full app containerization are
-designed for but not implemented in this iteration.
+A live (WebSocket/SSE) view and full app containerization are designed for but
+not implemented in this iteration.

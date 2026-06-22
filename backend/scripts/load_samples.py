@@ -1,12 +1,18 @@
 from __future__ import annotations
 
 import csv
+import os
 import sys
 from pathlib import Path
 
 import httpx
+from dotenv import load_dotenv
 
-API = "http://localhost:8000/api/telemetry/batch"
+load_dotenv()
+
+BASE = os.getenv("API_BASE", "http://localhost:8000/api")
+LOGIN_URL = f"{BASE}/login"
+API = f"{BASE}/telemetry/batch"
 CHUNK = 5000
 
 # CSV column -> API field
@@ -65,6 +71,22 @@ def _post(client: httpx.Client, chunk: list[dict]) -> int:
     return resp.json()["inserted"]
 
 
+def _login(client: httpx.Client) -> None:
+    # The ingestion endpoint is protected, so authenticate first and keep the
+    # bearer token on the client for all subsequent posts.
+    username = os.getenv("AUTH_USERNAME", "admin")
+    password = os.getenv("AUTH_PASSWORD")
+    if not password:
+        print("Set AUTH_PASSWORD (and AUTH_USERNAME) in the environment / .env "
+              "so the loader can authenticate.")
+        sys.exit(1)
+    resp = client.post(LOGIN_URL, json={"username": username, "password": password})
+    if resp.status_code != 200:
+        print(f"Login failed ({resp.status_code}): check AUTH_USERNAME/AUTH_PASSWORD")
+        sys.exit(1)
+    client.headers["Authorization"] = f"Bearer {resp.json()['access_token']}"
+
+
 def main() -> None:
     samples_dir = Path(sys.argv[1] if len(sys.argv) > 1 else ".")
     files = sorted(samples_dir.glob("B*_*.csv"))
@@ -72,6 +94,7 @@ def main() -> None:
         print(f"No mission CSVs found in {samples_dir}")
         sys.exit(1)
     with httpx.Client() as client:
+        _login(client)
         grand = 0
         for path in files:
             n = load_file(client, path)

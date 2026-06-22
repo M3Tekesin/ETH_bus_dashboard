@@ -1,4 +1,21 @@
 const BASE = "http://localhost:8000/api";
+const TOKEN_KEY = "telemetry_token";
+
+export const getToken = () => localStorage.getItem(TOKEN_KEY);
+export const setToken = (t: string) => localStorage.setItem(TOKEN_KEY, t);
+export const clearToken = () => localStorage.removeItem(TOKEN_KEY);
+
+// Log in and store the JWT. Throws on bad credentials.
+export async function login(username: string, password: string): Promise<void> {
+  const r = await fetch(`${BASE}/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, password }),
+  });
+  if (!r.ok) throw new Error(r.status === 401 ? "Invalid username or password" : `Login failed (${r.status})`);
+  const body = (await r.json()) as { access_token: string };
+  setToken(body.access_token);
+}
 
 export interface Filters { bus?: string; start?: string; end?: string; }
 
@@ -41,7 +58,16 @@ function qs(f: Filters, extra: Record<string, string> = {}): string {
 }
 
 async function get<T>(path: string): Promise<T> {
-  const r = await fetch(`${BASE}${path}`);
+  const token = getToken();
+  const r = await fetch(`${BASE}${path}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (r.status === 401) {
+    // Token missing/expired — drop it and let the app return to the login screen.
+    clearToken();
+    window.dispatchEvent(new Event("auth-expired"));
+    throw new Error("Session expired — please log in again");
+  }
   if (!r.ok) throw new Error(`${path} -> ${r.status}`);
   return r.json() as Promise<T>;
 }
