@@ -21,17 +21,36 @@ const BUS_COLORS = ["#4f46e5", "#ef4444", "#10b981", "#f59e0b", "#8b5cf6", "#06b
 // The trend bucket is 5 minutes; if two consecutive samples for a bus are more
 // than ~2 buckets apart there's a data gap (e.g. between mission days), so we
 // insert a null breaker to stop the line bridging time with no data.
-const BUCKET_MS = 5 * 60 * 1000;
-const GAP_MS = BUCKET_MS * 2;
-
 type Row = Record<string, number | string | null>;
 
+// Pick a bucket size from the selected span so a wide range doesn't cram each
+// mission into a few pixels (and a narrow range keeps full detail).
+function pickBucketSeconds(spanMs: number | null): number {
+  if (spanMs == null) return 300;
+  const days = spanMs / 86_400_000;
+  if (days <= 2) return 300; // 5 min
+  if (days <= 14) return 3600; // 1 hour
+  if (days <= 90) return 21_600; // 6 hours
+  return 86_400; // 1 day
+}
+
+function spanMsOf(start?: string, end?: string): number | null {
+  if (!start || !end) return null;
+  const norm = (v: string) => Date.parse(v.length === 16 ? `${v}:00Z` : `${v}Z`);
+  const s = norm(start);
+  const e = norm(end);
+  return isNaN(s) || isNaN(e) ? null : e - s;
+}
+
 // Multiple buses → merged rows keyed by ts, each bus its own key, with per-bus
-// null breakers in gaps so each line only spans real data.
+// null breakers in gaps (more than ~2 buckets apart) so each line only spans
+// real data.
 function multiSeries(
   data: { bucket: string; bus_id: string; value: number | null }[],
   selected: string[],
+  bucketMs: number,
 ): Row[] {
+  const gapMs = bucketMs * 2;
   const rows = new Map<number, Row>();
   const at = (ts: number): Row => {
     let r = rows.get(ts);
@@ -45,8 +64,8 @@ function multiSeries(
     let prevTs: number | null = null;
     for (const p of pts) {
       const ts = new Date(p.bucket).getTime();
-      if (prevTs != null && ts - prevTs > GAP_MS) {
-        at(prevTs + BUCKET_MS)[bus] = null;
+      if (prevTs != null && ts - prevTs > gapMs) {
+        at(prevTs + bucketMs)[bus] = null;
       }
       at(ts)[bus] = p.value;
       prevTs = ts;
@@ -75,12 +94,15 @@ export function TrendChart({ filters, buses }: { filters: Filters; buses: string
     () => fetchTrend(filters, metric, 300),
     [filters.bus, filters.start, filters.end, metric, compare]
   );
+  // Coarsen the bucket as the time span grows so a months-wide compare view
+  // doesn't squeeze each mission into an unreadable spike.
+  const bucketSeconds = pickBucketSeconds(spanMsOf(filters.start, filters.end));
   const multi = useAsync(
     () =>
       compare && selected.length
-        ? fetchTrendByBus(filters, metric, 300, selected)
+        ? fetchTrendByBus(filters, metric, bucketSeconds, selected)
         : Promise.resolve([]),
-    [filters.start, filters.end, metric, compare, selected.join(",")]
+    [filters.start, filters.end, metric, compare, selected.join(","), bucketSeconds]
   );
 
   const loading = compare ? multi.loading : single.loading;
@@ -96,8 +118,12 @@ export function TrendChart({ filters, buses }: { filters: Filters; buses: string
   const selectedSet = new Set(selected);
   const compareRows = multiSeries(
     (multi.data ?? []).filter((p) => selectedSet.has(p.bus_id)),
-    selected
+    selected,
+    bucketSeconds * 1000
   );
+  // Show dots when points are sparse so isolated missions are visible (a lone
+  // bucket can't draw a line); hide them on dense detail views.
+  const showDots = compareRows.length <= 40;
 
   // Zero-split coloring (single mode only — keeps power consumption vs regen clear).
   let min = Infinity;
@@ -189,7 +215,7 @@ export function TrendChart({ filters, buses }: { filters: Filters; buses: string
                     dataKey={bus}
                     name={bus}
                     stroke={BUS_COLORS[buses.indexOf(bus) % BUS_COLORS.length]}
-                    dot={false}
+                    dot={showDots ? { r: 2 } : false}
                   />
                 ))}
               </>
