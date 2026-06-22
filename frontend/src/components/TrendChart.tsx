@@ -210,9 +210,18 @@ export function TrendChart(
             data={(compare ? compareRows : points) as Row[]}
             margin={{ top: 5, right: 10, bottom: 5, left: 12 }}
             onClick={(state) => {
-              const ts = (state as { activePayload?: { payload?: { ts?: number } }[] })
-                ?.activePayload?.[0]?.payload?.ts;
-              if (typeof ts === "number") onPointClick?.(ts);
+              if (!onPointClick) return;
+              const s = state as {
+                activePayload?: { payload?: { ts?: number } }[];
+                activeTooltipIndex?: number | string | null;
+              };
+              const rows = (compare ? compareRows : points) as { ts?: number }[];
+              const idx = s?.activeTooltipIndex;
+              const n = idx == null ? NaN : Number(idx);
+              const ts =
+                s?.activePayload?.[0]?.payload?.ts ??
+                (Number.isInteger(n) ? rows[n]?.ts : undefined);
+              if (typeof ts === "number") onPointClick(ts);
             }}
             style={onPointClick ? { cursor: "pointer" } : undefined}
           >
