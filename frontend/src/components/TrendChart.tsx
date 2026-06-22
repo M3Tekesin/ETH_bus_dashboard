@@ -89,7 +89,10 @@ function multiSeries(
 
 const fmtTime = (ts: number) => new Date(ts).toLocaleString();
 
-export function TrendChart({ filters, buses }: { filters: Filters; buses: string[] }) {
+export function TrendChart(
+  { filters, buses, onPointClick }:
+  { filters: Filters; buses: string[]; onPointClick?: (ts: number) => void },
+) {
   const [metric, setMetric] = useState("speed");
   const [compare, setCompare] = useState(false);
   // Which buses to overlay in compare mode. `null` = not yet chosen → all buses.
@@ -121,10 +124,12 @@ export function TrendChart({ filters, buses }: { filters: Filters; buses: string
   const loading = compare ? multi.loading : single.loading;
   const error = compare ? multi.error : single.error;
 
-  // Single mode: categorical x-axis, one slot per bucket.
+  // Single mode: categorical x-axis, one slot per bucket. `ts` rides along so a
+  // click can resolve the point's day.
   const points = (single.data ?? []).map((p) => ({
     t: new Date(p.bucket).toLocaleString(),
     value: p.value,
+    ts: new Date(p.bucket).getTime(),
   }));
 
   // Compare mode: time-scaled, gap-aware rows for the selected buses only.
@@ -204,6 +209,12 @@ export function TrendChart({ filters, buses }: { filters: Filters; buses: string
           <LineChart
             data={(compare ? compareRows : points) as Row[]}
             margin={{ top: 5, right: 10, bottom: 5, left: 12 }}
+            onClick={(state) => {
+              const ts = (state as { activePayload?: { payload?: { ts?: number } }[] })
+                ?.activePayload?.[0]?.payload?.ts;
+              if (typeof ts === "number") onPointClick?.(ts);
+            }}
+            style={onPointClick ? { cursor: "pointer" } : undefined}
           >
             {!compare && (
               <defs>

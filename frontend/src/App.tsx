@@ -56,6 +56,18 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
       .catch(() => setFilters({ bus }));
   }, [buses]);
 
+  // Clicking a trend point drills into that point's (UTC) day: 00:00 → next 00:00.
+  const zoomToDay = (ts: number) => {
+    const d = new Date(ts);
+    const startMs = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+    const endMs = startMs + 24 * 60 * 60 * 1000;
+    setFilters((f) => ({
+      ...f,
+      start: toInput(new Date(startMs).toISOString()),
+      end: toInput(new Date(endMs).toISOString()),
+    }));
+  };
+
   return (
     <div className="app">
       <div className="app-head">
@@ -65,7 +77,7 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
       <FilterBar buses={buses ?? []} filters={filters} onChange={setFilters} />
       <KpiCards filters={filters} />
       <div className="charts">
-        <TrendChart filters={filters} buses={buses ?? []} />
+        <TrendChart filters={filters} buses={buses ?? []} onPointClick={zoomToDay} />
         <DistributionChart filters={filters} />
       </div>
     </div>
